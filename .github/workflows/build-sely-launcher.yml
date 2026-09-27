@@ -44,7 +44,7 @@ jobs:
             exit 1
           fi
 
-          echo "Using: $SDKMANAGER"
+          echo "Using sdkmanager: $SDKMANAGER"
 
           "$SDKMANAGER" --version
 
@@ -60,37 +60,30 @@ jobs:
           test -d "$ANDROID_HOME/platforms/android-34"
           test -d "$ANDROID_HOME/build-tools/34.0.0"
 
-          echo "Android SDK 34 is ready."
+          echo "Android SDK is ready."
 
       - name: Find Sely Launcher ZIP
         shell: bash
         run: |
-          echo "Files in repository:"
-          find . -maxdepth 2 -type f -print
-
           ZIP_FILE=$(find . -maxdepth 2 -type f \
-            \( -iname "*.zip" \) \
+            -iname "*.zip" \
             ! -path "./.git/*" \
             | head -n 1)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: No ZIP file was found in the repository."
+            echo "ERROR: No ZIP file found."
             exit 1
           fi
 
-          echo "Found Sely Launcher ZIP:"
+          echo "Found:"
           echo "$ZIP_FILE"
 
           echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
 
       - name: Extract Sely Launcher
-        shell: bash
         run: |
           rm -rf project
           mkdir -p project
-
-          echo "Extracting:"
-          echo "$ZIP_FILE"
 
           unzip -o "$ZIP_FILE" -d project
 
@@ -100,19 +93,18 @@ jobs:
       - name: Locate Android project
         shell: bash
         run: |
-          PROJECT_DIR=$(find project \
-            -name settings.gradle.kts \
-            -o -name settings.gradle \
+          SETTINGS=$(find project \
+            \( -name settings.gradle.kts -o -name settings.gradle \) \
             | head -n 1)
 
-          if [ -z "$PROJECT_DIR" ]; then
+          if [ -z "$SETTINGS" ]; then
             echo "ERROR: Android Gradle project not found."
             exit 1
           fi
 
-          PROJECT_DIR=$(dirname "$PROJECT_DIR")
+          PROJECT_DIR=$(dirname "$SETTINGS")
 
-          echo "Android project found at:"
+          echo "Android project:"
           echo "$PROJECT_DIR"
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
@@ -126,27 +118,56 @@ jobs:
           org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
           EOF
 
-          echo "AndroidX enabled."
+      - name: Fix RecoverableSecurityException import
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          FILE=$(find app/src/main/java \
+            -name "FileHubActivity.kt" \
+            | head -n 1)
+
+          if [ -z "$FILE" ]; then
+            echo "ERROR: FileHubActivity.kt not found."
+            exit 1
+          fi
+
+          echo "Found:"
+          echo "$FILE"
+
+          if grep -q "RecoverableSecurityException" "$FILE"; then
+
+            if ! grep -q "import android.app.RecoverableSecurityException" "$FILE"; then
+              echo "Adding missing import..."
+
+              sed -i \
+                '/^package /a import android.app.RecoverableSecurityException' \
+                "$FILE"
+            else
+              echo "Import already exists."
+            fi
+
+          else
+            echo "RecoverableSecurityException is not used."
+          fi
+
+          echo "Imports now:"
+          head -n 30 "$FILE"
 
       - name: Verify project
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          test -f build.gradle.kts || test -f build.gradle
-          test -f settings.gradle.kts || test -f settings.gradle
           test -f app/build.gradle.kts || test -f app/build.gradle
           test -d app/src/main
 
-          echo "Android project verified."
+          echo "Project verification successful."
 
       - name: Prepare Gradle
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
           if [ -f gradlew ]; then
-            echo "Gradle wrapper found."
             chmod +x gradlew
           else
             echo "Gradle wrapper not found."
-            echo "Creating Gradle wrapper..."
 
             wget -q \
               https://services.gradle.org/distributions/gradle-8.7-bin.zip
@@ -167,20 +188,19 @@ jobs:
       - name: Find APK
         shell: bash
         run: |
-          echo "Searching for generated APK..."
-
           APK=$(find "$PROJECT_DIR" \
             -type f \
             -name "*.apk" \
             | head -n 1)
 
           if [ -z "$APK" ]; then
-            echo "ERROR: No APK was generated."
+            echo "ERROR: APK was not generated."
             exit 1
           fi
 
-          echo "APK generated:"
-          echo "$APK"
+          echo "================================"
+          echo "Sely Launcher APK generated!"
+          echo "================================"
 
           echo "APK_PATH=$APK" >> "$GITHUB_ENV"
 
