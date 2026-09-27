@@ -1,0 +1,172 @@
+name: Build Sely Launcher APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Sely Launcher
+    runs-on: ubuntu-24.04
+
+    steps:
+
+      # 1. Get the repository
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. Java 17
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # 3. Use the Android SDK already installed on GitHub
+      - name: Configure Android SDK
+        shell: bash
+        run: |
+          set -e
+
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+
+          SDKMANAGER=""
+
+          if [ -f "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
+            SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          fi
+
+          if [ -z "$SDKMANAGER" ]; then
+            SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" \
+              -type f \
+              -name sdkmanager \
+              2>/dev/null | head -n 1)
+          fi
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "ERROR: sdkmanager was not found."
+            exit 1
+          fi
+
+          echo "Using sdkmanager:"
+          echo "$SDKMANAGER"
+
+          "$SDKMANAGER" --version
+
+          echo "Accepting Android SDK licenses..."
+          yes | "$SDKMANAGER" --licenses || true
+
+          echo "Installing required Android packages..."
+
+          "$SDKMANAGER" \
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0"
+
+      # 4. Check SDK
+      - name: Verify Android SDK
+        run: |
+          echo "Installed Android platforms:"
+          ls -la "$ANDROID_HOME/platforms"
+
+          echo "Installed build tools:"
+          ls -la "$ANDROID_HOME/build-tools"
+
+          test -d "$ANDROID_HOME/platforms/android-34"
+          test -d "$ANDROID_HOME/build-tools/34.0.0"
+
+          echo "Android SDK is ready."
+
+      # 5. Extract the ZIP
+      - name: Extract Sely Launcher
+        run: |
+          rm -rf project
+          mkdir -p project
+
+          unzip -o SelyLauncher-1.zip -d project
+
+          echo "Extracted files:"
+          find project -maxdepth 3 -type f | sort
+
+      # 6. Enable AndroidX
+      - name: Configure AndroidX
+        working-directory: project/SelyLauncher
+        run: |
+          cat > gradle.properties <<'EOF'
+          android.useAndroidX=true
+          android.enableJetifier=true
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          EOF
+
+          echo "AndroidX enabled."
+
+      # 7. Verify Android project
+      - name: Verify Sely Launcher project
+        working-directory: project/SelyLauncher
+        run: |
+          test -f build.gradle.kts
+          test -f settings.gradle.kts
+          test -f app/build.gradle.kts
+          test -d app/src/main
+
+          echo "Sely Launcher Android project found successfully."
+
+      # 8. Prepare Gradle
+      - name: Prepare Gradle
+        working-directory: project/SelyLauncher
+        run: |
+          if [ -f gradlew ]; then
+            echo "Gradle wrapper found."
+            chmod +x gradlew
+          else
+            echo "Gradle wrapper not found."
+            echo "Creating Gradle wrapper..."
+
+            wget -q \
+              https://services.gradle.org/distributions/gradle-8.7-bin.zip
+
+            unzip -q gradle-8.7-bin.zip
+
+            ./gradle-8.7/bin/gradle wrapper \
+              --gradle-version 8.7
+
+            chmod +x gradlew
+          fi
+
+      # 9. Build APK
+      - name: Build Sely Launcher Debug APK
+        working-directory: project/SelyLauncher
+        run: |
+          ./gradlew assembleDebug --stacktrace
+
+      # 10. Check APK
+      - name: Verify APK
+        run: |
+          APK="project/SelyLauncher/app/build/outputs/apk/debug/app-debug.apk"
+
+          if [ ! -f "$APK" ]; then
+            echo "ERROR: APK was not generated."
+            echo "Searching for APK files..."
+            find project -name "*.apk" -type f
+            exit 1
+          fi
+
+          echo "================================="
+          echo "Sely Launcher APK BUILT!"
+          echo "================================="
+
+          ls -lh "$APK"
+
+      # 11. Upload APK
+      - name: Upload Sely Launcher APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sely-Launcher-APK
+          path: project/SelyLauncher/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
